@@ -500,3 +500,201 @@ func NewDomain(m qmp.Monitor, name string) (*Domain, error) {
 
 	return d, nil
 }
+
+
+
+
+// PATCH FOR SUPPORTING FULL VM SNAPSHOTS
+
+// SnapshotFullVM is starting a job to create a full VM snapshot, blocks until the even is done or errors out, or the timeout is reached
+func (d *Domain) SnapshotFullVM(tag, job_id, vmstate string, disks_to_snapshot []string, timeout time.Duration) (error) {
+
+	cmd := qmp.Command{
+		Execute: "snapshot-save",
+    	Args: map[string]interface{}{
+			"tag": tag,
+			"job-id": job_id,
+			"vmstate": vmstate,
+			"devices": disks_to_snapshot,
+    	},
+	}
+	// setup listeners
+	done, err := waitForComplete(timeout, job_id, d)
+	// stop the vm first
+	d.rm.Stop()
+
+	if _, err := d.Run(cmd); err != nil {
+		return fmt.Errorf("failed to save snapshot: %v", err)
+	}
+
+	// wait on timeout
+	select {
+		case <-done:
+			// completed
+		case <-time.After(timeout):
+			return fmt.Errorf("timeout waiting for snapshot load to complete")
+	}
+
+	return err
+}
+
+func (d *Domain) LoadSnapshot(tag, job_id, vmstate string, disks_to_snapshot []string, timeout time.Duration) (error) {
+	cmd := qmp.Command{
+		Execute: "snapshot-load",
+		Args: map[string]interface{}{
+			"tag": tag,
+			"job-id": job_id,
+			"vmstate": vmstate,
+			"devices": disks_to_snapshot,
+		},
+	}
+	// setup listener
+	done, err := waitForComplete(timeout, job_id, d)
+
+	// stop the vm first
+	d.rm.Stop()
+	if _, err := d.Run(cmd); err != nil {
+		return fmt.Errorf("failed to load snapshot: %v", err)
+	}
+
+	// wait on timeout
+	select {
+		case <-done:
+			// completed
+		case <-time.After(timeout):
+			return fmt.Errorf("timeout waiting for snapshot load to complete")
+	}
+	// start the vm again
+	d.rm.Cont()
+
+	return err
+	
+}
+
+func waitForComplete(timeout time.Duration, job_id string, d *Domain) (done chan struct{}, err error) {
+	// if we successfuly send the command, return a "done" channel that closes when the job is done or errors out
+	// after @timeout seconds.
+	
+	// We will do that by waiting for the "BLOCK_JOB_COMPLETED" or "BLOCK_JOB_ERROR" event on the event stream
+	// and returning a channel that closes when we get one of those events.
+	// We will use the waitForSignal function to do that.
+	
+	done = make(chan struct{})
+	
+	cleanup := func () (error) {
+		cmdFinalize := qmp.Command{
+			Execute: "job-dismiss",
+			Args: map[string]interface{}{
+				"id": job_id,
+			},
+		}
+		if _, err := d.Run(cmdFinalize); err != nil {
+			return fmt.Errorf("failed to finalize snapshot job: %v", err)
+		}
+		return nil
+	}
+
+	go func(){
+		defer close(done)
+
+		// set a deadline on the context
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+		
+		// use the monitor to get events
+		events, _err := d.m.Events(ctx)
+		if _err != nil {
+			err = fmt.Errorf("failed to get events: %v", _err)
+			return
+		}
+
+		for ev := range events {
+			fmt.Printf("event: %v\n", ev)
+
+			// we only care about events with our job_id
+			if ev.Data["id"] != job_id {
+				continue
+			}
+
+			if ev.Data["status"] != "concluded" && ev.Data["status"] != "aborting" {
+				continue
+			}
+
+			// if we are here, we do a query status for the job and see if it was successful
+			err = queryJobStatus(job_id, d)
+			fmt.Printf("job %v completed with error: %v\n", job_id, err)
+						
+			// clean up and append the error 
+			if _err := cleanup(); _err != nil {
+				if err != nil {
+					err = fmt.Errorf("%v; additionally failed to cleanup snapshot job: %v", err, _err)
+				} else {
+					err = fmt.Errorf("failed to cleanup snapshot job: %v", _err)
+				}
+			}
+
+			return
+		}
+
+		err = fmt.Errorf("timeout waiting for snapshot job to complete")
+	}()
+
+	return done, err
+}
+
+// Job represents a single QMP job returned by query-jobs
+type Job struct {
+	ID              string `json:"id"`
+	Status          string `json:"status"`
+	Type            string `json:"type"`
+	Error           string `json:"error"`
+	CurrentProgress int    `json:"current-progress"`
+	TotalProgress   int    `json:"total-progress"`
+}
+
+// QueryJobsResult represents the full JSON return from query-jobs
+type QueryJobsResult struct {
+	Return []Job `json:"return"`
+}
+
+func queryJobStatus(job_id string, d *Domain) (error) {
+	// GetJobError searches for a job by ID and returns its error string
+	cmd := qmp.Command{
+		Execute: "query-jobs",
+	}
+
+	if raw_ret, err := d.Run(cmd); err != nil {
+		return fmt.Errorf("failed to query jobs: %v", err)
+	} else {
+		JobErr, found, err := GetJobError(job_id, raw_ret)
+		if err != nil {
+			return fmt.Errorf("failed to parse jobs: %v", err)
+		}
+		if !found {
+			return fmt.Errorf("job %v not found", job_id)
+		}
+		return JobErr
+	}
+
+}
+
+func GetJobError(jobID string, jsonData []byte) (error, bool, error) {
+	var result QueryJobsResult
+	if err := json.Unmarshal(jsonData, &result); err != nil {
+		return nil, false, err
+	}
+
+	for _, job := range result.Return {
+		if job.ID == jobID {
+			if job.Error != "" {
+				return fmt.Errorf("%v", job.Error), true, nil
+			}
+			return nil, true, nil
+		}
+	}
+
+	// Job not found
+	return nil, false, nil
+}
