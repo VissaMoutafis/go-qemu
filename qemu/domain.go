@@ -508,66 +508,75 @@ func NewDomain(m qmp.Monitor, name string) (*Domain, error) {
 
 // SnapshotFullVM is starting a job to create a full VM snapshot, blocks until the even is done or errors out, or the timeout is reached
 func (d *Domain) SnapshotFullVM(tag, job_id, vmstate string, disks_to_snapshot []string, timeout time.Duration) (error) {
-
+// { "execute": "human-monitor-command", "arguments": { "command-line": "savevm + tag" } }
 	cmd := qmp.Command{
-		Execute: "snapshot-save",
+		Execute: "human-monitor-command",
     	Args: map[string]interface{}{
-			"tag": tag,
-			"job-id": job_id,
-			"vmstate": vmstate,
-			"devices": disks_to_snapshot,
+			"command-line": "savevm " + tag,
+			// "job-id": job_id,
+			// "vmstate": vmstate,
+			// "devices": disks_to_snapshot,
     	},
 	}
 	// setup listeners
-	done, err := waitForComplete(timeout, job_id, d)
+	// done, err := waitForComplete(timeout, job_id, d)
 	// stop the vm first
-	d.rm.Stop()
+	// d.rm.Stop()
 
-	if _, err := d.Run(cmd); err != nil {
+	if response, err := d.Run(cmd); err != nil {
 		return fmt.Errorf("failed to save snapshot: %v", err)
+	} else {
+		fmt.Printf("response from savevm: %s\n", string(response))
 	}
 
 	// wait on timeout
-	select {
-		case <-done:
-			// completed
-		case <-time.After(timeout):
-			return fmt.Errorf("timeout waiting for snapshot load to complete")
-	}
+	// select {
+	// 	case <-done:
+	// 		// completed
+	// 	case <-time.After(timeout):
+	// 		return fmt.Errorf("timeout waiting for snapshot load to complete")
+	// }
 
-	return err
+	// start the vm again
+	// d.rm.Cont()
+
+	return nil
 }
 
 func (d *Domain) LoadSnapshot(tag, job_id, vmstate string, disks_to_snapshot []string, timeout time.Duration) (error) {
+	// { "execute": "human-monitor-command", "arguments": { "command-line": "loadvm golden" } }
 	cmd := qmp.Command{
-		Execute: "snapshot-load",
+		Execute: "human-monitor-command",
 		Args: map[string]interface{}{
-			"tag": tag,
-			"job-id": job_id,
-			"vmstate": vmstate,
-			"devices": disks_to_snapshot,
+			"command-line": "loadvm " + tag,
+			// "job-id": job_id,
+			// "vmstate": vmstate,
+			// "devices": disks_to_snapshot,
 		},
 	}
 	// setup listener
-	done, err := waitForComplete(timeout, job_id, d)
+	// done, err := waitForComplete(timeout, job_id, d)
 
 	// stop the vm first
-	d.rm.Stop()
-	if _, err := d.Run(cmd); err != nil {
+	// d.rm.Stop()
+	if respose, err := d.Run(cmd); err != nil {
 		return fmt.Errorf("failed to load snapshot: %v", err)
+	} else {
+		fmt.Printf("response from loadvm: %s\n", string(respose))
 	}
+	
 
-	// wait on timeout
-	select {
-		case <-done:
-			// completed
-		case <-time.After(timeout):
-			return fmt.Errorf("timeout waiting for snapshot load to complete")
-	}
+	// // wait on timeout
+	// select {
+	// 	case <-done:
+	// 		// completed
+	// 	case <-time.After(timeout):
+	// 		return fmt.Errorf("timeout waiting for snapshot load to complete")
+	// }
 	// start the vm again
-	d.rm.Cont()
+	// d.rm.Cont()
 
-	return err
+	return nil
 	
 }
 
