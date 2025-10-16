@@ -523,10 +523,10 @@ func (d *Domain) SnapshotFullVM(tag, job_id, vmstate string, disks_to_snapshot [
 	// stop the vm first
 	// d.rm.Stop()
 
-	if response, err := d.Run(cmd); err != nil {
+	if _, err := d.Run(cmd); err != nil {
 		return fmt.Errorf("failed to save snapshot: %v", err)
 	} else {
-		fmt.Printf("response from savevm: %s\n", string(response))
+		// fmt.Printf("response from savevm: %s\n", string(response))
 	}
 
 	// wait on timeout
@@ -544,6 +544,29 @@ func (d *Domain) SnapshotFullVM(tag, job_id, vmstate string, disks_to_snapshot [
 }
 
 func (d *Domain) LoadSnapshot(tag, job_id, vmstate string, disks_to_snapshot []string, timeout time.Duration) (error) {
+
+	// do a query-savevm before
+	// cmd_ := qmp.Command{
+	// 	Execute: "query-savevm",
+	// 	Args: map[string]interface{}{
+	// 		// "command-line": "query-savevm ",
+	// 		// "job-id": job_id,
+	// 		// "vmstate": vmstate,
+	// 		// "devices": disks_to_snapshot,
+	// 	},
+	// }
+	// // setup listener
+	// // done, err := waitForComplete(timeout, job_id, d)
+
+	// // stop the vm first
+	// // d.rm.Stop()
+	// if res, err := d.Run(cmd_); err != nil {
+	// 	return fmt.Errorf("failed to load snapshot: %v", err)
+	// } else {
+	// 	fmt.Printf("response from loadvm: %s\n", string(res))
+	// }
+	
+
 	// { "execute": "human-monitor-command", "arguments": { "command-line": "loadvm golden" } }
 	cmd := qmp.Command{
 		Execute: "human-monitor-command",
@@ -559,10 +582,10 @@ func (d *Domain) LoadSnapshot(tag, job_id, vmstate string, disks_to_snapshot []s
 
 	// stop the vm first
 	// d.rm.Stop()
-	if respose, err := d.Run(cmd); err != nil {
+	if _, err := d.Run(cmd); err != nil {
 		return fmt.Errorf("failed to load snapshot: %v", err)
 	} else {
-		fmt.Printf("response from loadvm: %s\n", string(respose))
+		// fmt.Printf("response from loadvm: %s\n", string(res))
 	}
 	
 
